@@ -1,7 +1,7 @@
 use convert_case::{Case, Casing};
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
-use syn::{Ident, Type, TypeParam};
+use quote::{format_ident, quote, ToTokens};
+use syn::{Ident, Type};
 
 use crate::error::Error;
 
@@ -24,12 +24,9 @@ impl<'a> Fields<'a> {
         self.fields().map(
             |Field {
                  field_ident,
-                 generic,
+                 generic_ident,
                  ..
-             }| {
-                let ty = &generic.ident;
-                quote!(#field_ident: #ty)
-            },
+             }| { quote!(#field_ident: #generic_ident) },
         )
     }
 
@@ -38,8 +35,18 @@ impl<'a> Fields<'a> {
             .map(|Field { field_ident, .. }| quote!(#field_ident: ::builder::NoData::new()))
     }
 
-    pub fn generics(&'a self) -> impl Iterator<Item = &'a TypeParam> + 'a {
-        self.fields().map(|field| &field.generic)
+    pub fn generics(&'a self) -> impl Iterator<Item = TokenStream> + 'a {
+        self.fields()
+            .map(|field| field.generic_ident.to_token_stream())
+    }
+
+    pub fn no_data_generics(&'a self) -> impl Iterator<Item = TokenStream> + 'a {
+        self.fields()
+            .map(|Field { ty, .. }| quote!(::builder::NoData<#ty>))
+    }
+
+    pub fn completed_generics(&'a self) -> impl Iterator<Item = TokenStream> + 'a {
+        self.fields().map(|field| field.ty.to_token_stream())
     }
 }
 
@@ -171,7 +178,7 @@ impl<'a> TryFrom<(usize, &'a syn::Field)> for UnnamedField<'a> {
 pub struct Field<'a> {
     pub field_ident: Ident,
     pub setter: Ident,
-    pub generic: TypeParam,
+    pub generic_ident: Ident,
     pub ty: &'a Type,
 }
 
@@ -182,12 +189,12 @@ impl<'a> Field<'a> {
         let camel_suffix = suffix.to_case(Case::UpperCamel);
         let field_ident = format_ident!("field_{}", snake_suffix);
         let setter = format_ident!("set_{}", snake_suffix);
-        let generic_ident = format_ident!("Field{}", camel_suffix);
+        let generic_ident = format_ident!("__Field{}", camel_suffix);
         let ty = &field.ty;
         Field {
             field_ident,
             setter,
-            generic: syn::parse_quote!(#generic_ident = ::builder::NoData<#ty>),
+            generic_ident,
             ty,
         }
     }

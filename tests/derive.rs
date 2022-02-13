@@ -41,3 +41,21 @@ fn build_field_struct() {
         }
     );
 }
+
+#[derive(Builder, Debug, PartialEq)]
+struct GenericStruct<T>(T);
+
+#[test]
+fn build_generic_struct() {
+    let x = GenericStruct::<u32>::builder().set_0(33).build();
+    assert_eq!(x, GenericStruct(33));
+}
+
+#[derive(Builder, Debug, PartialEq)]
+struct ConstGeneric<T, const N: usize>([T; N]);
+
+#[test]
+fn build_const_generic() {
+    let x = ConstGeneric::builder().set_0([32, 44, 61]).build();
+    assert_eq!(x, ConstGeneric([32, 44, 61]));
+}

@@ -1,9 +1,9 @@
-use core::marker::PhantomData;
 use core::fmt;
+use core::marker::PhantomData;
 
 pub use builder_derive::Builder;
 
-pub trait Builder {
+pub trait Builder: Sized {
     type Builder;
 
     fn builder() -> Self::Builder;

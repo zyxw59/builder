@@ -17,10 +17,13 @@ pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let builder = StructAttrs::try_from(&input).unwrap();
     let ident = &builder.ident;
     let builder_ident = &builder.builder_ident;
+    let builder_generics = builder
+        .generics
+        .ty_generics(builder.fields.no_data_generics());
     quote! {
         #[automatically_derived]
         impl #impl_generics builder::Builder for #ident #ty_generics #where_clause {
-            type Builder = #builder_ident;
+            type Builder = #builder_ident <#(#builder_generics),*>;
 
             fn builder() -> Self::Builder {
                 #builder_ident::new()
@@ -45,22 +48,23 @@ impl<'a> StructAttrs<'a> {
         self.generics
             .lifetimes()
             .chain(self.generics.types())
-            .chain(self.fields.generics().map(ToTokens::to_token_stream))
+            .chain(self.fields.generics())
             .chain(self.generics.consts())
     }
 
     fn default_constructor(&self) -> TokenStream {
+        let impl_generics = self.generics.impl_generics(None);
         let builder_ident = &self.builder_ident;
-        let builder_generics = self.generics.types();
+        let ty_generics = self.generics.ty_generics(self.fields.no_data_generics());
         let generic_fields = self.generics.default_constructors();
         let fields = self.fields.default_constructors();
         quote! {
             #[automatically_derived]
-            impl #builder_ident <#(#builder_generics),*> {
+            impl <#(#impl_generics),*> #builder_ident <#(#ty_generics),*> {
                 const fn new() -> Self {
                     Self {
-                        #(#generic_fields),*
-                        #(#fields),*
+                        #(#generic_fields,)*
+                        #(#fields,)*
                     }
                 }
             }
@@ -69,50 +73,42 @@ impl<'a> StructAttrs<'a> {
 
     fn setters(&'a self) -> impl Iterator<Item = TokenStream> + 'a {
         self.fields.fields().enumerate().map(|(i, field)| {
-            let impl_generics = self
-                .generics
-                .lifetimes()
-                .chain(self.generics.types())
-                .chain(self.fields.fields().enumerate().filter_map(|(j, field)| {
-                    if i == j {
-                        // this is the field we are writing the impl for; it is not generic here
-                        None
-                    } else {
-                        Some(field.generic.ident.to_token_stream())
-                    }
-                }))
-                .chain(self.generics.consts());
+            let impl_generics =
+                self.generics
+                    .impl_generics(self.fields.fields().enumerate().filter_map(|(j, field)| {
+                        if i == j {
+                            // this is the field we are writing the impl for; it is not generic here
+                            None
+                        } else {
+                            Some(field.generic_ident.to_token_stream())
+                        }
+                    }));
             let builder_ident = &self.builder_ident;
             let ty_generics = self
                 .generics
-                .lifetimes()
-                .chain(self.generics.types())
-                .chain(self.fields.fields().enumerate().map(|(j, field)| {
+                .ty_generics(self.fields.fields().enumerate().map(|(j, field)| {
                     if i == j {
                         // this is the field we are writing the impl for; fill in the concrete
                         // `NoData` type
                         let ty = &field.ty;
                         quote!(::builder::NoData<#ty>)
                     } else {
-                        field.generic.ident.to_token_stream()
+                        field.generic_ident.to_token_stream()
                     }
-                }))
-                .chain(self.generics.consts());
+                }));
             let setter = &field.setter;
             let ty = field.ty;
             let out_ty_generics = self
                 .generics
-                .lifetimes()
-                .chain(self.generics.types())
-                .chain(self.fields.fields().enumerate().map(|(j, field)| {
+                .ty_generics(self.fields.fields().enumerate().map(|(j, field)| {
                     if i == j {
                         // this is the field we are writing the impl for; fill in the concrete type
                         ty.to_token_stream()
                     } else {
-                        field.generic.ident.to_token_stream()
+                        field.generic_ident.to_token_stream()
                     }
-                }))
-                .chain(self.generics.consts());
+                }));
+            let generic_fields = self.generics.default_constructors();
             let fields = self.fields.fields().enumerate().map(|(j, field)| {
                 let field_ident = &field.field_ident;
                 if i == j {
@@ -128,7 +124,8 @@ impl<'a> StructAttrs<'a> {
                 impl <#(#impl_generics),*> #builder_ident <#(#ty_generics),*> {
                     fn #setter(self, value: #ty) -> #builder_ident <#(#out_ty_generics),*> {
                         #builder_ident {
-                            #(#fields),*
+                            #(#generic_fields,)*
+                            #(#fields,)*
                         }
                     }
                 }
@@ -138,20 +135,10 @@ impl<'a> StructAttrs<'a> {
 
     fn build(&self) -> TokenStream {
         let builder_ident = &self.builder_ident;
-        let impl_generics = self
-            .generics
-            .lifetimes()
-            .chain(self.generics.types())
-            // no field generics, since all the fields are filled in with concrete types
-            .chain(self.generics.consts());
-        let builder_ty_generics = self
-            .generics
-            .lifetimes()
-            .chain(self.generics.types())
-            .chain(self.fields.fields().map(|field| field.ty.to_token_stream()))
-            .chain(self.generics.consts());
+        let impl_generics = self.generics.impl_generics(None);
+        let builder_ty_generics = self.generics.ty_generics(self.fields.completed_generics());
         let ident = self.ident;
-        let ty_generics = self.generics.lifetimes().chain(self.generics.types()).chain(self.generics.consts());
+        let ty_generics = self.generics.ty_generics(None);
         let fields = match &self.fields {
             Fields::Named(fields) => {
                 let fields = fields.iter().map(|field| {
@@ -194,8 +181,8 @@ impl<'a> ToTokens for StructAttrs<'a> {
         let stream = quote! {
             #[automatically_derived]
             #vis struct #builder_ident <#(#builder_generics),*> {
-                #(#generic_markers),*
-                #(#fields),*
+                #(#generic_markers,)*
+                #(#fields,)*
             }
 
             #default_constructor
