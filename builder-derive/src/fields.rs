@@ -20,6 +20,21 @@ impl<'a> Fields<'a> {
         }
     }
 
+    pub fn fields_except<T>(
+        &'a self,
+        except_idx: usize,
+        mut usual: impl FnMut(&'a Field<'a>) -> T + 'a,
+        mut exception: impl FnMut(&'a Field<'a>) -> T + 'a,
+    ) -> impl Iterator<Item = T> + 'a {
+        self.fields().enumerate().map(move |(i, field)| {
+            if i == except_idx {
+                exception(field)
+            } else {
+                usual(field)
+            }
+        })
+    }
+
     pub fn field_definitions(&'a self) -> impl Iterator<Item = TokenStream> + 'a {
         self.fields().map(
             |Field {
@@ -178,6 +193,7 @@ impl<'a> TryFrom<(usize, &'a syn::Field)> for UnnamedField<'a> {
 pub struct Field<'a> {
     pub field_ident: Ident,
     pub setter: Ident,
+    pub builder: Ident,
     pub generic_ident: Ident,
     pub ty: &'a Type,
 }
@@ -187,15 +203,12 @@ impl<'a> Field<'a> {
         let suffix = suffix.to_string();
         let snake_suffix = suffix.to_case(Case::Snake);
         let camel_suffix = suffix.to_case(Case::UpperCamel);
-        let field_ident = format_ident!("field_{}", snake_suffix);
-        let setter = format_ident!("set_{}", snake_suffix);
-        let generic_ident = format_ident!("__Field{}", camel_suffix);
-        let ty = &field.ty;
         Field {
-            field_ident,
-            setter,
-            generic_ident,
-            ty,
+            field_ident: format_ident!("field_{}", snake_suffix),
+            setter: format_ident!("set_{}", snake_suffix),
+            builder: format_ident!("build_{}", snake_suffix),
+            generic_ident: format_ident!("__Field{}", camel_suffix),
+            ty: &field.ty,
         }
     }
 }

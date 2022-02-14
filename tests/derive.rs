@@ -59,3 +59,19 @@ fn build_const_generic() {
     let x = ConstGeneric::builder().set_0([32, 44, 61]).build();
     assert_eq!(x, ConstGeneric([32, 44, 61]));
 }
+
+#[derive(Builder, Debug, PartialEq)]
+struct Nested {
+    inner: FieldStruct,
+}
+
+#[test]
+fn build_nested() {
+    let x = Nested::builder().build_inner().set_name("emily".into()).set_value(127).build().build();
+    assert_eq!(x, Nested {
+        inner: FieldStruct {
+            name: "emily".into(),
+            value: 127,
+        }
+    })
+}
