@@ -71,17 +71,26 @@ impl<T> Default for NoData<T> {
     }
 }
 
-pub trait OrDefault<T> where T: Sized {
+pub trait OrDefault<T>
+where
+    T: Sized,
+{
     fn or_default(self) -> T;
 }
 
-impl<T> OrDefault<T> for T where T: Sized {
+impl<T> OrDefault<T> for T
+where
+    T: Sized,
+{
     fn or_default(self) -> T {
         self
     }
 }
 
-impl<T> OrDefault<T> for NoData<T> where T: Default {
+impl<T> OrDefault<T> for NoData<T>
+where
+    T: Default,
+{
     fn or_default(self) -> T {
         T::default()
     }
