@@ -9,6 +9,40 @@ pub trait Builder: Sized {
     fn builder() -> Self::Builder;
 }
 
+impl<T> Builder for T
+where
+    T: BuilderWithCallback<fn(Self) -> Self>,
+{
+    type Builder = <Self as BuilderWithCallback<fn(Self) -> Self>>::CallbackBuilder;
+
+    fn builder() -> Self::Builder {
+        Self::builder_with_callback((|this| this) as fn(Self) -> Self)
+    }
+}
+
+pub trait BuilderWithCallback<F: Callback<Self>>: Sized {
+    type CallbackBuilder;
+
+    fn builder_with_callback(callback: F) -> Self::CallbackBuilder;
+}
+
+pub trait Callback<T> {
+    type Output;
+
+    fn callback(self, this: T) -> Self::Output;
+}
+
+impl<F, I, O> Callback<I> for F
+where
+    F: FnOnce(I) -> O,
+{
+    type Output = O;
+
+    fn callback(self, this: I) -> Self::Output {
+        self(this)
+    }
+}
+
 pub struct NoData<T>(PhantomData<T>);
 
 impl<T> NoData<T> {

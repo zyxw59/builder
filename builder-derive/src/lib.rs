@@ -1,3 +1,5 @@
+use std::iter::once;
+
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{DeriveInput, Ident, Visibility};
@@ -13,22 +15,10 @@ use generics::Generics;
 #[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = syn::parse_macro_input!(input as DeriveInput);
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let builder = StructAttrs::try_from(&input).unwrap();
-    let ident = &builder.ident;
-    let builder_ident = &builder.builder_ident;
-    let builder_generics = builder
-        .generics
-        .ty_generics(builder.fields.no_data_generics());
+    let builder_with_callback = builder.builder_with_callback();
     quote! {
-        #[automatically_derived]
-        impl #impl_generics builder::Builder for #ident #ty_generics #where_clause {
-            type Builder = #builder_ident <#(#builder_generics),*>;
-
-            fn builder() -> Self::Builder {
-                #builder_ident::new()
-            }
-        }
+        #builder_with_callback
 
         #builder
     }
@@ -39,6 +29,7 @@ struct StructAttrs<'a> {
     vis: &'a Visibility,
     ident: &'a Ident,
     builder_ident: Ident,
+    callback: Ident,
     generics: Generics<'a>,
     fields: Fields<'a>,
 }
@@ -48,22 +39,73 @@ impl<'a> StructAttrs<'a> {
         self.generics
             .lifetimes()
             .chain(self.generics.types())
+            .chain(once(self.callback.to_token_stream()))
             .chain(self.fields.generics())
             .chain(self.generics.consts())
     }
 
-    fn default_constructor(&self) -> TokenStream {
-        let impl_generics = self.generics.impl_generics(None);
+    fn impl_generics(
+        &'a self,
+        other_types: impl IntoIterator<Item = TokenStream> + 'a,
+    ) -> impl Iterator<Item = TokenStream> + 'a {
+        self.generics
+            .impl_generics(once(self.callback.to_token_stream()).chain(other_types))
+    }
+
+    fn ty_generics(
+        &'a self,
+        other_types: impl IntoIterator<Item = TokenStream> + 'a,
+    ) -> impl Iterator<Item = TokenStream> + 'a {
+        self.generics
+            .ty_generics(once(self.callback.to_token_stream()).chain(other_types))
+    }
+
+    fn where_clause(&'a self) -> TokenStream {
+        let where_predicates = self.generics.where_predicates();
+        let built_type = self.ident;
+        let ty_generics = self.generics.ty_generics(None);
+        let callback = &self.callback;
+        quote!(where #(#where_predicates,)* #callback: ::builder::Callback<#built_type <#(#ty_generics,)*>>)
+    }
+
+    fn builder_with_callback(&self) -> TokenStream {
+        let callback = &self.callback;
+        let impl_generics = self.impl_generics(None);
+        let ident = &self.ident;
+        let ty_generics = self.generics.ty_generics(None);
+        let where_clause = self.where_clause();
+
         let builder_ident = &self.builder_ident;
-        let ty_generics = self.generics.ty_generics(self.fields.no_data_generics());
+        let builder_generics = self.ty_generics(self.fields.no_data_generics());
+        quote! {
+            #[automatically_derived]
+            impl <#(#impl_generics,)*> builder::BuilderWithCallback<#callback> for #ident <#(#ty_generics,)*> #where_clause
+            {
+                type CallbackBuilder = #builder_ident <#(#builder_generics,)*>;
+
+                fn builder_with_callback(callback: #callback) -> Self::CallbackBuilder {
+                    #builder_ident::new(callback)
+                }
+            }
+        }
+    }
+
+    fn default_constructor(&self) -> TokenStream {
+        let callback = &self.callback;
+        let impl_generics = self.impl_generics(None);
+        let builder_ident = &self.builder_ident;
+        let ty_generics = self.ty_generics(self.fields.no_data_generics());
+        let where_clause = self.where_clause();
+
         let generic_fields = self.generics.default_constructors();
         let fields = self.fields.default_constructors();
         quote! {
             #[automatically_derived]
-            impl <#(#impl_generics),*> #builder_ident <#(#ty_generics),*> {
-                const fn new() -> Self {
+            impl <#(#impl_generics),*> #builder_ident <#(#ty_generics),*> #where_clause {
+                fn new(callback: #callback) -> Self {
                     Self {
                         #(#generic_fields,)*
+                        callback,
                         #(#fields,)*
                     }
                 }
@@ -74,19 +116,17 @@ impl<'a> StructAttrs<'a> {
     fn setters(&'a self) -> impl Iterator<Item = TokenStream> + 'a {
         self.fields.fields().enumerate().map(|(i, field)| {
             let impl_generics =
-                self.generics
-                    .impl_generics(self.fields.fields().enumerate().filter_map(|(j, field)| {
-                        if i == j {
-                            // this is the field we are writing the impl for; it is not generic here
-                            None
-                        } else {
-                            Some(field.generic_ident.to_token_stream())
-                        }
-                    }));
+                self.impl_generics(self.fields.fields().enumerate().filter_map(|(j, field)| {
+                    if i == j {
+                        // this is the field we are writing the impl for; it is not generic here
+                        None
+                    } else {
+                        Some(field.generic_ident.to_token_stream())
+                    }
+                }));
             let builder_ident = &self.builder_ident;
-            let ty_generics = self
-                .generics
-                .ty_generics(self.fields.fields().enumerate().map(|(j, field)| {
+            let ty_generics =
+                self.ty_generics(self.fields.fields().enumerate().map(|(j, field)| {
                     if i == j {
                         // this is the field we are writing the impl for; fill in the concrete
                         // `NoData` type
@@ -98,9 +138,8 @@ impl<'a> StructAttrs<'a> {
                 }));
             let setter = &field.setter;
             let ty = field.ty;
-            let out_ty_generics = self
-                .generics
-                .ty_generics(self.fields.fields().enumerate().map(|(j, field)| {
+            let out_ty_generics =
+                self.ty_generics(self.fields.fields().enumerate().map(|(j, field)| {
                     if i == j {
                         // this is the field we are writing the impl for; fill in the concrete type
                         ty.to_token_stream()
@@ -125,6 +164,7 @@ impl<'a> StructAttrs<'a> {
                     fn #setter(self, value: #ty) -> #builder_ident <#(#out_ty_generics),*> {
                         #builder_ident {
                             #(#generic_fields,)*
+                            callback: self.callback,
                             #(#fields,)*
                         }
                     }
@@ -134,11 +174,14 @@ impl<'a> StructAttrs<'a> {
     }
 
     fn build(&self) -> TokenStream {
+        let callback = &self.callback;
+        let impl_generics = self.impl_generics(None);
         let builder_ident = &self.builder_ident;
-        let impl_generics = self.generics.impl_generics(None);
-        let builder_ty_generics = self.generics.ty_generics(self.fields.completed_generics());
+        let builder_ty_generics = self.ty_generics(self.fields.completed_generics());
+        let where_clause = self.where_clause();
+
         let ident = self.ident;
-        let ty_generics = self.generics.ty_generics(None);
+
         let fields = match &self.fields {
             Fields::Named(fields) => {
                 let fields = fields.iter().map(|field| {
@@ -159,9 +202,9 @@ impl<'a> StructAttrs<'a> {
         };
         quote! {
             #[automatically_derived]
-            impl <#(#impl_generics),*> #builder_ident <#(#builder_ty_generics),*> {
-                fn build(self) -> #ident <#(#ty_generics),*> {
-                    #ident #fields
+            impl <#(#impl_generics),*> #builder_ident <#(#builder_ty_generics),*> #where_clause {
+                fn build(self) -> #callback::Output {
+                    self.callback.callback(#ident #fields)
                 }
             }
         }
@@ -173,7 +216,9 @@ impl<'a> ToTokens for StructAttrs<'a> {
         let vis = self.vis;
         let builder_ident = &self.builder_ident;
         let builder_generics = self.builder_generics();
+
         let generic_markers = self.generics.field_definitions();
+        let callback = &self.callback;
         let fields = self.fields.field_definitions();
         let default_constructor = self.default_constructor();
         let setters = self.setters();
@@ -182,6 +227,7 @@ impl<'a> ToTokens for StructAttrs<'a> {
             #[automatically_derived]
             #vis struct #builder_ident <#(#builder_generics),*> {
                 #(#generic_markers,)*
+                callback: #callback,
                 #(#fields,)*
             }
 
@@ -205,6 +251,7 @@ impl<'a> TryFrom<&'a DeriveInput> for StructAttrs<'a> {
                 vis: &input.vis,
                 ident: &input.ident,
                 builder_ident,
+                callback: syn::parse_quote!(__Callback),
                 generics: (&input.generics).into(),
                 fields: (&data.fields).try_into()?,
             }),

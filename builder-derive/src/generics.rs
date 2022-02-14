@@ -1,12 +1,13 @@
 use convert_case::{Case, Casing};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote, ToTokens};
-use syn::{ConstParam, Ident, LifetimeDef, TypeParam};
+use syn::{ConstParam, Ident, LifetimeDef, TypeParam, WherePredicate};
 
 pub struct Generics<'a> {
     lifetimes: Vec<&'a LifetimeDef>,
     types: Vec<Generic<'a>>,
     consts: Vec<&'a ConstParam>,
+    where_predicates: Vec<&'a WherePredicate>,
 }
 
 impl<'a> Generics<'a> {
@@ -82,6 +83,10 @@ impl<'a> Generics<'a> {
     pub fn consts(&'a self) -> impl Iterator<Item = TokenStream> + 'a {
         self.consts.iter().map(ToTokens::to_token_stream)
     }
+
+    pub fn where_predicates(&'a self) -> &'a [&'a WherePredicate] {
+        &self.where_predicates
+    }
 }
 
 impl<'a> From<&'a syn::Generics> for Generics<'a> {
@@ -90,6 +95,13 @@ impl<'a> From<&'a syn::Generics> for Generics<'a> {
             lifetimes: generics.lifetimes().collect(),
             types: generics.type_params().map(Generic::from).collect(),
             consts: generics.const_params().collect(),
+            where_predicates: generics
+                .where_clause
+                .as_ref()
+                .map(|clause| &clause.predicates)
+                .into_iter()
+                .flatten()
+                .collect(),
         }
     }
 }
