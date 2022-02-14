@@ -61,7 +61,11 @@ impl<'a> Fields<'a> {
     }
 
     pub fn completed_generics(&'a self) -> impl Iterator<Item = TokenStream> + 'a {
-        self.fields().map(|field| field.ty.to_token_stream())
+        self.fields().map(|field| if field.default {
+            field.generic_ident.to_token_stream()
+        } else {
+            field.ty.to_token_stream()
+        })
     }
 }
 
@@ -195,6 +199,7 @@ pub struct Field<'a> {
     pub setter: Ident,
     pub builder: Ident,
     pub generic_ident: Ident,
+    pub default: bool,
     pub ty: &'a Type,
 }
 
@@ -208,6 +213,25 @@ impl<'a> Field<'a> {
             setter: format_ident!("set_{}", snake_suffix),
             builder: format_ident!("build_{}", snake_suffix),
             generic_ident: format_ident!("__Field{}", camel_suffix),
+            default: field
+                .attrs
+                .iter()
+                .any(|attr| {
+                    use syn::Meta;
+                    if let Ok(Meta::List(list)) = attr.parse_meta() {
+                        list.path.is_ident::<Ident>(&syn::parse_quote!(builder))
+                            && list.nested.iter().any(|meta| {
+                                use syn::NestedMeta;
+                                if let NestedMeta::Meta(Meta::Path(p)) = meta {
+                                    p.is_ident::<Ident>(&syn::parse_quote!(default))
+                                } else {
+                                    false
+                                }
+                            })
+                    } else {
+                        false
+                    }
+                }),
             ty: &field.ty,
         }
     }

@@ -206,10 +206,30 @@ impl<'a> StructAttrs<'a> {
 
     fn build(&self) -> TokenStream {
         let callback = &self.callback;
-        let impl_generics = self.impl_generics(empty());
+        let impl_generics = self.impl_generics(self.fields.fields().filter_map(|field| {
+            if field.default {
+                Some(field.generic_ident.to_token_stream())
+            } else {
+                None
+            }
+        }));
         let builder_ident = &self.builder_ident;
         let builder_ty_generics = self.ty_generics(self.fields.completed_generics());
         let where_clause = self.where_clause();
+        let default_wheres = self.fields.fields().filter_map(
+            |Field {
+                 default,
+                 generic_ident,
+                 ty,
+                 ..
+             }| {
+                if *default {
+                    Some(quote!(#generic_ident: ::builder::OrDefault<#ty>))
+                } else {
+                    None
+                }
+            },
+        );
 
         let ident = self.ident;
 
@@ -218,14 +238,26 @@ impl<'a> StructAttrs<'a> {
                 let fields = fields.iter().map(|field| {
                     let ident = field.ident;
                     let field_ident = &field.field.field_ident;
-                    quote!(#ident: self.#field_ident)
+                    if field.field.default {
+                        let generic_ident = &field.field.generic_ident;
+                        let ty = field.field.ty;
+                        quote!(#ident: <#generic_ident as ::builder::OrDefault<#ty>>::or_default(self.#field_ident))
+                    } else {
+                        quote!(#ident: self.#field_ident)
+                    }
                 });
                 quote!({ #(#fields),* })
             }
             Fields::Unnamed(fields) => {
                 let fields = fields.iter().map(|field| {
                     let field_ident = &field.field.field_ident;
-                    quote!(self.#field_ident)
+                    if field.field.default {
+                        let generic_ident = &field.field.generic_ident;
+                        let ty = field.field.ty;
+                        quote!(<#generic_ident as ::builder::OrDefault<#ty>>::or_default(self.#field_ident))
+                    } else {
+                        quote!(self.#field_ident)
+                    }
                 });
                 quote!((#(#fields),*))
             }
@@ -233,7 +265,9 @@ impl<'a> StructAttrs<'a> {
         };
         quote! {
             #[automatically_derived]
-            impl <#(#impl_generics),*> #builder_ident <#(#builder_ty_generics),*> #where_clause {
+            impl <#(#impl_generics),*> #builder_ident <#(#builder_ty_generics),*>
+            #where_clause, #(#default_wheres),*
+            {
                 fn build(self) -> #callback::Output {
                     self.callback.callback(#ident #fields)
                 }

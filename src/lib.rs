@@ -68,3 +68,19 @@ impl<T> Default for NoData<T> {
         NoData(PhantomData)
     }
 }
+
+pub trait OrDefault<T> where T: Sized {
+    fn or_default(self) -> T;
+}
+
+impl<T> OrDefault<T> for T where T: Sized {
+    fn or_default(self) -> T {
+        self
+    }
+}
+
+impl<T> OrDefault<T> for NoData<T> where T: Default {
+    fn or_default(self) -> T {
+        T::default()
+    }
+}

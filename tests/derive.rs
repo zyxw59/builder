@@ -67,11 +67,38 @@ struct Nested {
 
 #[test]
 fn build_nested() {
-    let x = Nested::builder().build_inner().set_name("emily".into()).set_value(127).build().build();
-    assert_eq!(x, Nested {
-        inner: FieldStruct {
-            name: "emily".into(),
-            value: 127,
+    let x = Nested::builder()
+        .build_inner()
+        .set_name("emily".into())
+        .set_value(127)
+        .build()
+        .build();
+    assert_eq!(
+        x,
+        Nested {
+            inner: FieldStruct {
+                name: "emily".into(),
+                value: 127,
+            }
         }
-    })
+    )
+}
+
+#[derive(Builder, Debug, PartialEq)]
+struct WithDefaults {
+    name: String,
+    #[builder(default)]
+    value: u32,
+}
+
+#[test]
+fn build_defaults() {
+    let x = WithDefaults::builder().set_name("emily".into()).build();
+    assert_eq!(
+        x,
+        WithDefaults {
+            name: "emily".into(),
+            value: 0,
+        }
+    )
 }
